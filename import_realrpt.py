@@ -10,8 +10,11 @@ import sqlite3
 import datetime
 import cx_Oracle as db
 import os,sys
+import configparser
 
 global db_error
+global db_info
+
 db_error = False
 
 
@@ -70,11 +73,12 @@ def deal_mail(server,index):                   #读取单个邮件
         if fname is None:
             print("通融邮件：", subject,"邮件时间：",maildate,"——获取附件失败")
             return
-        if deal_tongrong(fname,fromwho,maildate) = 1:
+        if deal_tongrong(fname,fromwho,maildate) == 1:
             server.dele(index)
 
 def deal_tongrong(fname,fromwho,maildate):
     #把记录放到表szcx.auto_claim_tongrong
+    global db_info
     try:
         data = xlrd.open_workbook(fname)
     except Exception as e:
@@ -111,11 +115,14 @@ def main():
     # sub="Fwd: %s - D10 - Daily Details Report & Statement" % (today)
     # print("today:"+today)
     # print("sub:"+sub)
+    conf = configparser.ConfigParser()
+    conf.read('import.conf')
+    db_info = conf['info']['dbinfo']
 
     # 邮件地址, 口令和POP3服务器地址:
-    user = 'baoanshuju@cpic.com.cn'
-    password = 'Cpic12345'
-    pop3_server = '10.191.48.9'
+    user = conf['info']['mailuser']
+    password = conf['info']['mailpass']
+    pop3_server = conf['info']['mailserver']
     # 连接到POP3服务器:
     server = poplib.POP3(pop3_server)
     # server.set_debuglevel(1)  # 调试信息
