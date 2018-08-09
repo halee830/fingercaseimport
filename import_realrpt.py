@@ -98,7 +98,7 @@ def deal_tongrong(fname,fromwho,maildate):
             return -1
         for i in range(nrows):
             print(table.row_values(i),fromwho,maildate)
-            print('111xxx')
+            print('1xxx')
         con.close()
         return 1
 def main():
