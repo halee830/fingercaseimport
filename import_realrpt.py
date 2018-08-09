@@ -94,7 +94,7 @@ def deal_tongrong(fname,fromwho,maildate):
         if db_error:
             return -1
         try:
-            con = db.connect('szcx/Ora_szcx@10.187.12.60:1522/pshz189')  # 连接数据库,没有写try...
+            con = db.connect(db_info)
         except db.DatabaseError as exc:
             error, = exc.args
             print("Oracle-Error-Code:", error.code, " Oracle-Error-Message:", error.message)
@@ -106,7 +106,7 @@ def deal_tongrong(fname,fromwho,maildate):
         con.close()
         return 1
 def main():
-
+    global db_info
     os.environ['NLS_LANG'] = 'SIMPLIFIED CHINESE_CHINA.UTF8'
 
     # os.chdir('/home/kettle/python/temp')
