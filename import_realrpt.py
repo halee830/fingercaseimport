@@ -79,6 +79,9 @@ def deal_mail(server,index):                   #读取单个邮件
 def deal_tongrong(fname,fromwho,maildate):
     #把记录放到表szcx.auto_claim_tongrong
     global db_info
+    li_imported = 0
+    li_failure = 0
+    li_updateed = 0
     try:
         data = xlrd.open_workbook(fname)
     except Exception as e:
@@ -100,10 +103,96 @@ def deal_tongrong(fname,fromwho,maildate):
             print("Oracle-Error-Code:", error.code, " Oracle-Error-Message:", error.message)
             db_error = True
             return -1
+        cur = con.cursor()
+        cur.execute('truncate table szcx.auto_claim_tongrong_cp')
+        con.commit()
         for i in range(nrows):
-            print(table.row_values(i),fromwho,maildate)
-            print('1xxx')
+            if type(table.row_values(i)[8])== type(0.0) or type(table.row_values(i)[8])== type(1)  :
+                try:
+                    cur.execute('''
+                            insert into szcx.auto_claim_tongrong_cp values 
+                            (:zd0,:zd1,:zd2,:zd3,:zd4,:zd5,:zd6,:zd7,:zd8,:zd9,:zd10,sysdate,sysdate,:zd11,:zd12)
+                            ''',
+                            zd0=(table.row_values(i)[0]),
+                            zd1=(table.row_values(i)[1]),
+                            zd2=datetime.datetime(*xlrd.xldate_as_tuple(table.row_values(i)[2],data.datemode)),
+                            zd3=(table.row_values(i)[3]),
+                            zd4=(table.row_values(i)[4].replace(' ', '').replace('\n', '').replace('\t', '').replace('\r', '')),
+                            zd5=(table.row_values(i)[5]),
+                            zd6=(table.row_values(i)[6]),
+                            zd7=(table.row_values(i)[7]),
+                            zd8=(table.row_values(i)[8]),
+                            zd9=(table.row_values(i)[9]),
+                            zd10=(table.row_values(i)[10]),
+                            zd11=(fromwho),
+                            zd12=(maildate))
+                except db.DatabaseError as exc:
+                    error, = exc.args
+                    print(table.row_values(i)[4].replace(' ', '').replace('\n', '').replace('\t', '').replace('\r', ''))
+                    print("Oracle-Error-Code:", error.code, " Oracle-Error-Message:", error.message)
+                    li_failure = li_failure + 1
+                else:
+                    li_imported = li_imported + 1
+                    con.commit()
+                    #print("以下数据已插入")
+                    #print(table.row_values(i),fromwho,maildate)
+        try:
+            cur.execute('''
+                    merge into szcx.auto_claim_tongrong a
+                    using (
+                    select * from (
+                        select c.notificationno,c.insured,c.sectionname,c.serial_no,c.report_date
+                        ,c.reporter,before_discuss,c.after_discuss
+                        ,c.tr_amount,c.bmmc,c.discuss_reson,c.mail_sender,c.mail_time,c.update_time
+                        ,row_number() over(partition by c.notificationno,c.insured order by report_date desc) rn
+                        from szcx.auto_claim_tongrong_cp c)
+                    where rn = 1                    
+                    )b
+                    on (a.notificationno=b.notificationno and a.insured=b.insured)
+                    when matched
+                    then update
+                        set 
+                         a.sectionname        = b.sectionname   
+                        ,a.serial_no          = b.serial_no     
+                        ,a.report_date        = b.report_date   
+                        ,a.reporter           = b.reporter      
+                        ,a.before_discuss     = b.before_discuss
+                        ,a.after_discuss      = b.after_discuss 
+                        ,a.tr_amount          = b.tr_amount     
+                        ,a.bmmc               = b.bmmc          
+                        ,a.discuss_reson      = b.discuss_reson 
+                        ,a.update_time        = sysdate   
+                        ,a.mail_sender        = b.mail_sender   
+                        ,a.mail_time          = b.mail_time     
+                    when not matched
+                    then insert values(
+                            b.sectionname,
+                            b.serial_no,
+                            b.report_date,
+                            b.reporter,
+                            b.notificationno,
+                            b.insured,
+                            b.before_discuss,
+                            b.after_discuss,
+                            b.tr_amount,
+                            b.bmmc,
+                            b.discuss_reson,
+                            sysdate,
+                            sysdate,
+                            b.mail_sender,
+                            b.mail_time)         
+        
+             ''')
+        except db.DatabaseError as exc:
+            error, = exc.args
+            print(table.row_values(i)[4].replace(' ', '').replace('\n', '').replace('\t', '').replace('\r', ''))
+            print("Oracle-Error-Code:", error.code, " Oracle-Error-Message:", error.message)
+        else:
+            li_updateed = cur.rowcount
+            con.commit()
+        con.commit()
         con.close()
+        print("导入数据",li_imported,"条,失败",li_failure,"条，更新到最终表",li_updateed,'条')
         return 1
 def main():
     global db_info
