@@ -2,7 +2,7 @@
 from email.parser import Parser
 import email
 import email.header
-import poplib
+import poplib,smtplib
 import time
 import base64,os
 import xlrd
@@ -11,6 +11,10 @@ import datetime
 import cx_Oracle as db
 import os,sys
 import configparser
+from email.mime.text import MIMEText
+from email.header import Header
+import email.mime.multipart
+import email.mime.text
 
 global db_error
 global db_info
@@ -50,6 +54,7 @@ def get_attachment(msg):                      #下载附件并返回完整文件
     return None
 
 def deal_mail(server,index):                   #读取单个邮件
+    global user,password,pop3_server
     resp, lines, octets = server.retr(index)  # lines存储邮件的原始文本的每一行
     # 获得整个邮件的原始文本:
     msg_content = b'\r\n'.join(lines).decode('utf-8')
@@ -59,35 +64,59 @@ def deal_mail(server,index):                   #读取单个邮件
     # print(msg)
     fromwho = code_convert(msg.get("from"))    #发件人
 
-    print("发件人：", fromwho)
+    #print("发件人：", fromwho)
 
     maildate = datetime.datetime.strptime(msg.get("date"), '%a, %d %b %Y %H:%M:%S +0800')               #发件时间
 
-    print("邮件时间：", maildate,"   ",type(maildate))
+    #print("邮件时间：", maildate,"   ",type(maildate))
 
     subject = code_convert(msg.get("subject"))  # 取信件头里的subject,　也就是主题
-    print("邮件主题:", subject)
+    #print("邮件主题:", subject)
 
     if '通融' in subject:
         fname = get_attachment(msg)
         if fname is None:
             print("通融邮件：", subject,"邮件时间：",maildate,"——获取附件失败")
             return
-        if deal_tongrong(fname,fromwho,maildate) == 1:
+        li_success,ls_dealmsg=deal_tongrong(fname,fromwho,maildate)
+        if li_success== 1:
             server.dele(index)
+            ls_dealmsg = "邮件数据处理成功"+'\r\n'+ls_dealmsg
+        else:
+            ls_dealmsg = "邮件数据处理失败" + '\r\n' + ls_dealmsg
+
+        reply_message = MIMEText(ls_dealmsg,'html','utf-8')
+        reply_message.add_header("Content-Type",'text/plain; charset="utf-8"')
+        reply_message['from'] = user
+        reply_message['To'] = fromwho
+        reply_message['Subject'] = 'Re:'+subject
+
+        try:
+            smtpObj = smtplib.SMTP()
+            smtpObj.command_encoding = 'utf-8'
+            smtpObj.connect(pop3_server)
+            smtpObj.login(user,password)
+            smtpObj.sendmail(user, [fromwho],reply_message.as_string())
+            print ("邮件发送成功")
+        except smtplib.SMTPException:
+            print ("Error: 无法发送邮件")
+        smtpObj.quit()
 
 def deal_tongrong(fname,fromwho,maildate):
     #把记录放到表szcx.auto_claim_tongrong
     global db_info
+
+    ls_dealresult=''
+
     li_imported = 0
     li_failure = 0
     li_updateed = 0
     try:
         data = xlrd.open_workbook(fname)
     except Exception as e:
-        print(str(e))
-        print(fromwho,"---",maildate,"---",fname,"---","打开附件失败")
-        return -1
+        #print(str(e))
+        ls_dealresult = ls_dealresult +fromwho+"---"+maildate.strftime('%a, %d %b %Y %H:%M:%S +0800')+"---"+fname+"---"+"打开附件失败"
+        return -1,ls_dealresult
     # 取第一个Sheet
     table = data.sheet_by_index(0)
     nrows = table.nrows
@@ -95,17 +124,24 @@ def deal_tongrong(fname,fromwho,maildate):
     if nrows > 0:
         global db_error
         if db_error:
-            return -1
+            return -1,ls_dealresult + '当前无法连接数据库'
         try:
             con = db.connect(db_info)
         except db.DatabaseError as exc:
             error, = exc.args
-            print("Oracle-Error-Code:", error.code, " Oracle-Error-Message:", error.message)
+            ls_dealresult = ls_dealresult + "Oracle-Error-Code:"+error.code+" Oracle-Error-Message:"+error.message
             db_error = True
-            return -1
+            return -1,ls_dealresult
         cur = con.cursor()
-        cur.execute('truncate table szcx.auto_claim_tongrong_cp')
+        try:
+            cur.execute('truncate table szcx.auto_claim_tongrong_cp')
+        except db.DatabaseError as exc:
+            error, = exc.args
+            ls_dealresult = ls_dealresult + "Oracle-Error-Code:"+error.code+" Oracle-Error-Message:"+error.message
+            db_error = True
+            return -1,ls_dealresult
         con.commit()
+
         for i in range(nrows):
             if type(table.row_values(i)[8])== type(0.0) or type(table.row_values(i)[8])== type(1)  :
                 try:
@@ -128,8 +164,8 @@ def deal_tongrong(fname,fromwho,maildate):
                             zd12=(maildate))
                 except db.DatabaseError as exc:
                     error, = exc.args
-                    print(table.row_values(i)[4].replace(' ', '').replace('\n', '').replace('\t', '').replace('\r', ''))
-                    print("Oracle-Error-Code:", error.code, " Oracle-Error-Message:", error.message)
+                    ls_dealresult = ls_dealresult + '\r\n'+table.row_values(i)[4].replace(' ', '').replace('\n', '').replace('\t', '').replace('\r', '')
+                    ls_dealresult = ls_dealresult + '\r\n' + "Oracle-Error-Code:"+error.code+" Oracle-Error-Message:"+error.message
                     li_failure = li_failure + 1
                 else:
                     li_imported = li_imported + 1
@@ -164,6 +200,8 @@ def deal_tongrong(fname,fromwho,maildate):
                         ,a.update_time        = sysdate   
                         ,a.mail_sender        = b.mail_sender   
                         ,a.mail_time          = b.mail_time     
+                    where a.mail_sender <> b.mail_sender 
+                    and a.mail_time <> b.mail_time
                     when not matched
                     then insert values(
                             b.sectionname,
@@ -185,17 +223,19 @@ def deal_tongrong(fname,fromwho,maildate):
              ''')
         except db.DatabaseError as exc:
             error, = exc.args
-            print(table.row_values(i)[4].replace(' ', '').replace('\n', '').replace('\t', '').replace('\r', ''))
-            print("Oracle-Error-Code:", error.code, " Oracle-Error-Message:", error.message)
+            ls_dealresult = ls_dealresult + '\r\n' + '更新到结果表出错！！！！！请联系数据中心！！！'
+            ls_dealresult = ls_dealresult + '\r\n' + "Oracle-Error-Code:"+error.code+" Oracle-Error-Message:"+error.message
         else:
             li_updateed = cur.rowcount
             con.commit()
         con.commit()
         con.close()
-        print("导入数据",li_imported,"条,失败",li_failure,"条，更新到最终表",li_updateed,'条')
-        return 1
+        ls_dealresult = ls_dealresult + '\r\n' +"导入数据"+li_imported+"条,失败"+li_failure+"条，更新到最终表"+li_updateed+'条'
+        return 1,ls_dealresult
+
 def main():
-    global db_info
+    global db_info,user,password,pop3_server
+
     os.environ['NLS_LANG'] = 'SIMPLIFIED CHINESE_CHINA.UTF8'
 
     # os.chdir('/home/kettle/python/temp')
@@ -231,8 +271,8 @@ def main():
     if index == 0:
         print('没有需要处理的邮件。', time.asctime(time.localtime(time.time())))
         exit()
-    for i in range(1, index):
-        deal_mail(server, index + 1 - i)
-
+    for i in range(1, index+1):
+        deal_mail(server, i)
+    server.quit()
 if __name__ == '__main__':
     main()
