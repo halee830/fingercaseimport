@@ -28,8 +28,34 @@ def code_convert(info):                       #邮件转码
         convered = dh[0][0]
     else:
         convered = dh[0][0].decode(dh[0][1])
+        #print(dh[0][0],dh[0][1])
     return convered
+
+def send_mail( rec_name, rec_address, subject, mailmsg ) :    #收件人名字，地址，标题，正文
+
+    global user, password, pop3_server
+    reply_message = MIMEText(mailmsg, 'html', 'utf-8')
+    reply_message.add_header("Content-Type", 'text/plain; charset="utf-8"')
+    reply_message['from'] = user
+    reply_message['To'] = rec_name
+    reply_message['Subject'] = 'Re:' + subject
+
+    try:
+        smtpObj = smtplib.SMTP()
+        smtpObj.command_encoding = 'utf-8'
+        smtpObj.connect(pop3_server)
+        smtpObj.login(user, password)
+        smtpObj.sendmail(user, [rec_address], reply_message.as_string())
+        print("邮件发送成功")
+    except smtplib.SMTPException:
+        print("Error: 无法发送邮件")
+
+    smtpObj.quit()
+    return
+
 def get_attachment(msg):                      #下载附件并返回完整文件名，如果没有附件返回None
+
+
     for par in msg.walk():
         if not par.is_multipart():
             name = par.get_param("name")
@@ -53,7 +79,9 @@ def get_attachment(msg):                      #下载附件并返回完整文件
 
     return None
 
-def deal_mail(server,index):                   #读取单个邮件
+def deal_mail(server,index,conf):                   #读取单个邮件
+
+
     global user,password,pop3_server
     resp, lines, octets = server.retr(index)  # lines存储邮件的原始文本的每一行
     # 获得整个邮件的原始文本:
@@ -63,7 +91,10 @@ def deal_mail(server,index):                   #读取单个邮件
     msg = Parser().parsestr(msg_content)
     # print(msg)
     fromwho = code_convert(msg.get("from"))    #发件人
-
+    if fromwho in conf['maillist']:
+        receiver = conf['maillist'][fromwho]
+    else:
+        retrun
     #print("发件人：", fromwho)
 
     maildate = datetime.datetime.strptime(msg.get("date"), '%a, %d %b %Y %H:%M:%S +0800')               #发件时间
@@ -80,27 +111,13 @@ def deal_mail(server,index):                   #读取单个邮件
             return
         li_success,ls_dealmsg=deal_tongrong(fname,fromwho,maildate)
         if li_success== 1:
+            server.noop()
             server.dele(index)
             ls_dealmsg = "邮件数据处理成功"+'\r\n'+ls_dealmsg
         else:
             ls_dealmsg = "邮件数据处理失败" + '\r\n' + ls_dealmsg
+        send_mail(fromwho,receiver,subject,ls_dealmsg)    #收件人中文地址，收件人英文地址，标题，正文
 
-        reply_message = MIMEText(ls_dealmsg,'html','utf-8')
-        reply_message.add_header("Content-Type",'text/plain; charset="utf-8"')
-        reply_message['from'] = user
-        reply_message['To'] = fromwho
-        reply_message['Subject'] = 'Re:'+subject
-
-        try:
-            smtpObj = smtplib.SMTP()
-            smtpObj.command_encoding = 'utf-8'
-            smtpObj.connect(pop3_server)
-            smtpObj.login(user,password)
-            smtpObj.sendmail(user, [fromwho],reply_message.as_string())
-            print ("邮件发送成功")
-        except smtplib.SMTPException:
-            print ("Error: 无法发送邮件")
-        smtpObj.quit()
 
 def deal_tongrong(fname,fromwho,maildate):
     #把记录放到表szcx.auto_claim_tongrong
@@ -129,7 +146,7 @@ def deal_tongrong(fname,fromwho,maildate):
             con = db.connect(db_info)
         except db.DatabaseError as exc:
             error, = exc.args
-            ls_dealresult = ls_dealresult + "Oracle-Error-Code:"+error.code+" Oracle-Error-Message:"+error.message
+            ls_dealresult = ls_dealresult + "Oracle-Error-Code:"+str(error.code)+" Oracle-Error-Message:"+error.message
             db_error = True
             return -1,ls_dealresult
         cur = con.cursor()
@@ -137,7 +154,7 @@ def deal_tongrong(fname,fromwho,maildate):
             cur.execute('truncate table szcx.auto_claim_tongrong_cp')
         except db.DatabaseError as exc:
             error, = exc.args
-            ls_dealresult = ls_dealresult + "Oracle-Error-Code:"+error.code+" Oracle-Error-Message:"+error.message
+            ls_dealresult = ls_dealresult + "Oracle-Error-Code:"+str(error.code)+" Oracle-Error-Message:"+error.message
             db_error = True
             return -1,ls_dealresult
         con.commit()
@@ -165,7 +182,7 @@ def deal_tongrong(fname,fromwho,maildate):
                 except db.DatabaseError as exc:
                     error, = exc.args
                     ls_dealresult = ls_dealresult + '\r\n'+table.row_values(i)[4].replace(' ', '').replace('\n', '').replace('\t', '').replace('\r', '')
-                    ls_dealresult = ls_dealresult + '\r\n' + "Oracle-Error-Code:"+error.code+" Oracle-Error-Message:"+error.message
+                    ls_dealresult = ls_dealresult + '\r\n' + "Oracle-Error-Code:"+str(error.code)+" Oracle-Error-Message:"+error.message
                     li_failure = li_failure + 1
                 else:
                     li_imported = li_imported + 1
@@ -224,13 +241,13 @@ def deal_tongrong(fname,fromwho,maildate):
         except db.DatabaseError as exc:
             error, = exc.args
             ls_dealresult = ls_dealresult + '\r\n' + '更新到结果表出错！！！！！请联系数据中心！！！'
-            ls_dealresult = ls_dealresult + '\r\n' + "Oracle-Error-Code:"+error.code+" Oracle-Error-Message:"+error.message
+            ls_dealresult = ls_dealresult + '\r\n' + "Oracle-Error-Code:"+str(error.code)+" Oracle-Error-Message:"+error.message
         else:
             li_updateed = cur.rowcount
             con.commit()
         con.commit()
         con.close()
-        ls_dealresult = ls_dealresult + '\r\n' +"导入数据"+li_imported+"条,失败"+li_failure+"条，更新到最终表"+li_updateed+'条'
+        ls_dealresult = ls_dealresult + '\r\n' +"导入数据"+str(li_imported)+"条,失败"+str(li_failure)+"条，更新到最终表"+str(li_updateed)+'条'
         return 1,ls_dealresult
 
 def main():
@@ -254,10 +271,14 @@ def main():
     pop3_server = conf['info']['mailserver']
     # 连接到POP3服务器:
     server = poplib.POP3(pop3_server)
-    # server.set_debuglevel(1)  # 调试信息
+    #server.set_debuglevel(1)  # 调试信息
     # 身份认证:
-    server.user(user)
-    server.pass_(password)
+    try:
+        server.user(user)
+        server.pass_(password)
+    except poplib.error_proto as e:
+        print("mail Login failed:", e)
+        sys.exit(1)
 
     # stat()返回(邮件数量,占用空间)
     # print('Messages: %s. Size: %s' % server.stat())
@@ -272,7 +293,7 @@ def main():
         print('没有需要处理的邮件。', time.asctime(time.localtime(time.time())))
         exit()
     for i in range(1, index+1):
-        deal_mail(server, i)
+        deal_mail(server, i,conf)
     server.quit()
 if __name__ == '__main__':
     main()
